@@ -1,0 +1,8 @@
+services:
+  betterposters:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./betterposters.db:/app/betterposters.db
+    restart: "no"

@@ -1,0 +1,11 @@
+# Sekrety / pliki lokalne
+.env
+betterposters.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# IDE
+.idea/
