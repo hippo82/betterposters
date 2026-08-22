@@ -9,8 +9,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY main_beta.py ./
+COPY main.py ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["python", "main_beta.py"]
+CMD ["python", "main.py"]
