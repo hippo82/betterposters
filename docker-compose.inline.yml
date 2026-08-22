@@ -1,0 +1,18 @@
+# Self-contained compose: all parameters are defined inline (no .env file needed).
+# Replace the placeholder values below before using.
+#
+# Usage:
+#   docker compose -f docker-compose.inline.yml up -d
+services:
+  betterposters:
+    image: ghcr.io/hippo82/betterposters:latest
+    container_name: betterposters
+    environment:
+      SERVER_URL: https://your-jellyfin.example.com/jellyfin
+      API_KEY: your-api-key
+      DB_PATH: /app/betterposters.db
+      POSTER_LANG: en
+      RUN_INTERVAL_MINUTES: "60"
+    volumes:
+      - ./betterposters.db:/app/betterposters.db
+    restart: unless-stopped

@@ -48,6 +48,15 @@ To pull a fresh image after a new push:
 docker compose up -d --pull always
 ```
 
+### 2b. Standalone compose (without a `.env` file)
+
+All parameters are defined inline in `docker-compose.inline.yml` — replace
+the placeholders with your values, then run:
+
+```bash
+docker compose -f docker-compose.inline.yml up -d
+```
+
 ### 3. Run once (local, without Docker)
 
 ```bash
@@ -59,10 +68,11 @@ Requires Python 3.13+ and `uv` (or `pip install requests python-dotenv`).
 
 ## Project layout
 
-| File                          | Purpose                                          |
-| ----------------------------- | ------------------------------------------------ |
-| `main.py`                     | The updater script (sync logic + state)          |
-| `Dockerfile`                  | Container image definition                       |
-| `docker-compose.yml`          | Run container (pulls public image from GHCR)     |
-| `.github/workflows/docker.yml`| Builds & pushes the image to GHCR on every push  |
-| `.env.example`                | Template for `.env`                              |
+| File                            | Purpose                                            |
+| ------------------------------- | -------------------------------------------------- |
+| `main.py`                       | The updater script (sync logic + state)            |
+| `Dockerfile`                    | Container image definition                         |
+| `docker-compose.yml`            | Run container (pulls public image from GHCR)       |
+| `docker-compose.inline.yml`     | Standalone compose with inline parameters          |
+| `.github/workflows/docker.yml`  | Builds & pushes the image to GHCR on every push    |
+| `.env.example`                  | Template for `.env`                                |
