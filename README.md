@@ -26,6 +26,7 @@ Create a `.env` file next to the compose file:
 SERVER_URL=https://your-jellyfin.example.com/jellyfin
 API_KEY=your-api-key
 RUN_INTERVAL_MINUTES=60   # how often to run (0 = run once and exit)
+POSTER_LANG=en            # poster language for btttr.cc (default: en)
 ```
 
 ### 2. Run (NAS / server)

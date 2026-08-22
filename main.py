@@ -20,6 +20,7 @@ Configuration (.env file next to the script or environment variables):
   SERVER_URL            Jellyfin address, e.g. https://your-host/jellyfin
   API_KEY               API key (X-Emby-Token)
   DB_PATH               path to the SQLite database (default: betterposters.db)
+  POSTER_LANG           poster language for btttr.cc (default: en)
   RUN_INTERVAL_MINUTES  run every N minutes (0 = run once and exit)
 """
 
@@ -40,6 +41,7 @@ load_dotenv()
 SERVER_URL = os.getenv("SERVER_URL", "").rstrip("/")
 API_KEY = os.getenv("API_KEY", "")
 DB_PATH = os.getenv("DB_PATH", "betterposters.db")
+POSTER_LANG = os.getenv("POSTER_LANG", "en")
 IDS_CHUNK = 100
 RUN_INTERVAL_MINUTES = int(os.getenv("RUN_INTERVAL_MINUTES", "0") or 0)
 
@@ -121,7 +123,7 @@ def get_fresh_tag(item_id, previous_tag=None):
 
 
 def upload_poster(item_id, item_name, imdb_id):
-    poster_url = f"https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg?lang=pl"
+    poster_url = f"https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg?lang={POSTER_LANG}"
 
     print(f"Downloading poster for '{item_name}' ({imdb_id})...")
 
