@@ -76,3 +76,8 @@ Requires Python 3.13+ and `uv` (or `pip install requests python-dotenv`).
 | `docker-compose.inline.yml`     | Standalone compose with inline parameters          |
 | `.github/workflows/docker.yml`  | Builds & pushes the image to GHCR on every push    |
 | `.env.example`                  | Template for `.env`                                |
+
+## Acknowledgments
+
+This project was created with the assistance of an AI assistant.
+
