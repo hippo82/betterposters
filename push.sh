@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Buduje obraz i wypycha go do GitHub Container Registry (ghcr.io).
+# Builds the image and pushes it to GitHub Container Registry (ghcr.io).
 #
-# Wymagania:
-#   1. Ustaw GHCR_USER w pliku .env (nazwa użytkownika GitHub).
-#   2. Zaloguj się do GHCR:
+# Requirements:
+#   1. Set GHCR_USER in .env (your GitHub username).
+#   2. Log in to GHCR:
 #        echo <TOKEN> | docker login ghcr.io -u <GHCR_USER> --password-stdin
-#      gdzie <TOKEN> to PAT GitHub z zakresem write:packages.
+#      where <TOKEN> is a GitHub PAT with the write:packages scope.
 #
-# Użycie:
+# Usage:
 #   ./push.sh
 set -euo pipefail
 
@@ -19,14 +19,14 @@ set +a
 IMAGE="ghcr.io/${GHCR_USER}/betterposters:latest"
 
 if [ -z "${GHCR_USER:-}" ]; then
-  echo "Błąd: ustaw GHCR_USER w pliku .env (nazwa użytkownika GitHub)." >&2
+  echo "Error: set GHCR_USER in .env (your GitHub username)." >&2
   exit 1
 fi
 
-echo "Buduję ${IMAGE}..."
+echo "Building ${IMAGE}..."
 docker build -t "${IMAGE}" .
 
-echo "Wypycham ${IMAGE}..."
+echo "Pushing ${IMAGE}..."
 docker push "${IMAGE}"
 
-echo "Gotowe: ${IMAGE}"
+echo "Done: ${IMAGE}"

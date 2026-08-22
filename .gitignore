@@ -1,6 +1,10 @@
-# Sekrety / pliki lokalne
+# Secrets / local files
 .env
 betterposters.db
+
+# Build config (kept out of the public repo)
+uv.lock
+pyproject.toml
 
 # Python
 __pycache__/

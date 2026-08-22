@@ -1,6 +1,6 @@
-# Uruchomienie na NAS-ie: pobiera obraz z GHCR i trzyma kontener włączony 24/7.
+# Run on the NAS: pulls the image from GHCR and keeps the container running 24/7.
 #
-# Użycie (w katalogu z .env i leżącym obok docker-compose.nas.yml):
+# Usage (in the directory with .env, next to docker-compose.nas.yml):
 #   docker compose -f docker-compose.nas.yml up -d
 services:
   betterposters:
