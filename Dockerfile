@@ -1,16 +1,11 @@
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+FROM python:3.13-slim
 
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
-
 COPY main.py ./
 
-ENV PATH="/app/.venv/bin:$PATH"
+RUN pip install --no-cache-dir requests python-dotenv
 
 CMD ["python", "main.py"]

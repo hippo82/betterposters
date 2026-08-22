@@ -1,8 +1,13 @@
+# Pulls the public image from GHCR and keeps the container running 24/7.
+#
+# Usage:
+#   docker compose up -d
 services:
   betterposters:
-    build: .
+    image: ghcr.io/${GHCR_USER:-hippo82}/betterposters:latest
+    container_name: betterposters
     env_file:
       - .env
     volumes:
       - ./betterposters.db:/app/betterposters.db
-    restart: "no"
+    restart: unless-stopped
