@@ -10,9 +10,9 @@ services:
     environment:
       SERVER_URL: https://your-jellyfin.example.com/jellyfin
       API_KEY: your-api-key
-      DB_PATH: /app/betterposters.db
+      DB_PATH: /app/data/betterposters.db
       POSTER_LANG: en
       RUN_INTERVAL_MINUTES: "60"
     volumes:
-      - ./betterposters.db:/app/betterposters.db
+      - ./data:/app/data
     restart: unless-stopped

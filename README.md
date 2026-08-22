@@ -40,7 +40,8 @@ docker compose up -d
 ```
 
 The container stays up 24/7 and syncs posters every `RUN_INTERVAL_MINUTES`.
-The SQLite database is persisted via a bind mount (`./betterposters.db`).
+The SQLite database is persisted in the `./data` directory (bind mount); it is
+created automatically on first run, so no manual setup is needed.
 
 To pull a fresh image after a new push:
 
