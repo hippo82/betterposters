@@ -1,6 +1,10 @@
 # Secrets / local files
 .env
 betterposters.db
+data/
+
+# Local utility (not pushed to GitHub)
+force_update.py
 
 # Build config (kept out of the public repo)
 uv.lock
