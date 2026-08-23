@@ -4,16 +4,20 @@ BetterPosters — Jellyfin poster updater from btttr.cc.
 Instead of updating every poster on each run, it tracks state in a local
 SQLite database (betterposters.db). Only these items are updated:
   1. new items (not present in the database),
-  2. items whose poster was changed by Jellyfin itself.
+  2. items whose poster changed at the source (btttr.cc) — detected via the
+     ETag of the generated poster (user ratings / community popularity),
+  3. items whose poster was changed by Jellyfin itself.
 
-Change detection: Jellyfin items expose ImageTags.Primary — a hash of the
-poster that changes on every image change (e.g. after a metadata refresh
-by Jellyfin). NOTE: the list endpoint (/Items?Recursive) returns stale
-(cached) tags, so current tags are fetched in batches via /Items?Ids=
-(chunked), which reflects the live state.
+Change detection:
+  - Source (btttr.cc): conditional GET with If-None-Match using the stored
+    ETag; a 304 response means the poster is unchanged.
+  - Jellyfin: ImageTags.Primary changes on every image change (e.g. after a
+    metadata refresh by Jellyfin). NOTE: the list endpoint (/Items?Recursive)
+    returns stale (cached) tags, so current tags are fetched in batches via
+    /Items?Ids= (chunked), which reflects the live state.
 
 Usage:
-  python main.py                 # update only new / changed by Jellyfin
+  python main.py                 # update only new / changed / updated posters
   python main.py --force         # update ALL posters, ignoring the database
 
 Configuration (.env file next to the script or environment variables):
@@ -55,12 +59,17 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS posters (
-            item_id    TEXT PRIMARY KEY,
-            imdb_id    TEXT,
-            image_tag  TEXT,
-            updated_at TEXT
+            item_id     TEXT PRIMARY KEY,
+            imdb_id     TEXT,
+            image_tag   TEXT,
+            source_etag TEXT,
+            updated_at  TEXT
         )
     """)
+    try:
+        conn.execute("ALTER TABLE posters ADD COLUMN source_etag TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     return conn
 
@@ -122,24 +131,35 @@ def get_fresh_tag(item_id, previous_tag=None):
     return None
 
 
-def upload_poster(item_id, imdb_id):
+def fetch_poster(imdb_id, etag=None):
+    """Conditional GET from btttr.cc.
+
+    Returns (status, bytes, new_etag):
+      status 'unchanged' -> 304, the generated poster has not changed
+      status 'changed'   -> 200 with new bytes and (possibly) a new ETag
+      status 'error'     -> HTTP error or network failure
+    """
     poster_url = f"https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg?lang={POSTER_LANG}"
-
+    request_headers = {"If-None-Match": etag} if etag else {}
     try:
-        poster_response = requests.get(poster_url, timeout=10)
-        if poster_response.status_code != 200:
-            return False
+        response = requests.get(poster_url, headers=request_headers, timeout=10)
     except requests.exceptions.RequestException:
-        return False
+        return "error", None, None
 
-    base64_image = base64.b64encode(poster_response.content).decode('utf-8')
+    if response.status_code == 304:
+        return "unchanged", None, etag
+    if response.status_code == 200:
+        return "changed", response.content, response.headers.get("ETag")
+    return "error", None, None
 
+
+def upload_image(item_id, image_bytes):
     upload_url = f"{SERVER_URL}/Items/{item_id}/Images/Primary"
     upload_headers = {
         "X-Emby-Token": API_KEY,
         "Content-Type": "image/jpeg",
     }
-
+    base64_image = base64.b64encode(image_bytes).decode('utf-8')
     try:
         upload_response = requests.post(upload_url, headers=upload_headers, data=base64_image, timeout=15)
         return upload_response.status_code in (200, 204)
@@ -147,17 +167,18 @@ def upload_poster(item_id, imdb_id):
         return False
 
 
-def save_poster(conn, item_id, imdb_id, image_tag):
+def save_poster(conn, item_id, imdb_id, image_tag, source_etag):
     conn.execute(
         """
-        INSERT INTO posters (item_id, imdb_id, image_tag, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO posters (item_id, imdb_id, image_tag, source_etag, updated_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(item_id) DO UPDATE SET
-            imdb_id    = excluded.imdb_id,
-            image_tag  = excluded.image_tag,
-            updated_at = excluded.updated_at
+            imdb_id     = excluded.imdb_id,
+            image_tag   = excluded.image_tag,
+            source_etag = excluded.source_etag,
+            updated_at  = excluded.updated_at
         """,
-        (item_id, imdb_id, image_tag, datetime.now(timezone.utc).isoformat()),
+        (item_id, imdb_id, image_tag, source_etag, datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
 
@@ -181,18 +202,42 @@ def run_once(force):
             continue
 
         row = conn.execute(
-            "SELECT image_tag FROM posters WHERE item_id = ?", (item_id,)
+            "SELECT image_tag, source_etag FROM posters WHERE item_id = ?", (item_id,)
         ).fetchone()
+        db_tag = row[0] if row else None
+        db_etag = row[1] if row else None
 
-        if not force and row and row[0] == current_tag:
-            skipped += 1
+        if force:
+            status, data, new_etag = fetch_poster(imdb_id, None)
+            if status == "changed" and upload_image(item_id, data):
+                save_poster(conn, item_id, imdb_id, get_fresh_tag(item_id, current_tag) or current_tag, new_etag or db_etag)
+                updated += 1
+            else:
+                failed += 1
             continue
 
-        if upload_poster(item_id, imdb_id):
-            new_tag = get_fresh_tag(item_id, current_tag)
-            if new_tag is None:
-                new_tag = current_tag
-            save_poster(conn, item_id, imdb_id, new_tag)
+        status, data, new_etag = fetch_poster(imdb_id, db_etag)
+
+        if status == "error":
+            failed += 1
+            continue
+
+        if status == "unchanged":
+            if db_tag == current_tag:
+                skipped += 1
+                continue
+            # Jellyfin replaced the poster -> restore the current btttr version
+            status2, data2, _ = fetch_poster(imdb_id, None)
+            if status2 == "changed" and upload_image(item_id, data2):
+                save_poster(conn, item_id, imdb_id, get_fresh_tag(item_id, current_tag) or current_tag, db_etag)
+                updated += 1
+            else:
+                failed += 1
+            continue
+
+        # source changed (ratings / popularity) or new item -> upload
+        if upload_image(item_id, data):
+            save_poster(conn, item_id, imdb_id, get_fresh_tag(item_id, current_tag) or current_tag, new_etag or db_etag)
             updated += 1
         else:
             failed += 1
