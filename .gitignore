@@ -3,6 +3,9 @@
 betterposters.db
 data/
 
+# Prototype / Maintainerr integration (work in progress, not pushed)
+overlay/
+
 # Local utility (not pushed to GitHub)
 force_update.py
 

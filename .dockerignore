@@ -1,0 +1,19 @@
+# Secrets / local-only files (never in build context)
+.env
+.env.example
+data/
+betterposters.db
+overlay/
+
+# VCS / tools
+.git
+.gitignore
+.dockerignore
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Build config kept out of the public repo
+uv.lock
+pyproject.toml
