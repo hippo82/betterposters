@@ -4,7 +4,7 @@
 #   docker compose up -d
 services:
   betterposters:
-    image: ghcr.io/${GHCR_USER:-hippo82}/betterposters:latest
+    image: ghcr.io/hippo82/betterposters:latest
     container_name: betterposters
     env_file:
       - .env
