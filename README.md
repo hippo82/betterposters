@@ -7,7 +7,10 @@ Instead of overwriting every poster on each run, it keeps state in a local
 SQLite database (`betterposters.db`) and only updates:
 
 1. **new items** (not present in the database),
-2. **items whose poster was changed by Jellyfin itself** (detected via the
+2. **items whose poster changed at the source** — posters contain user
+   ratings and community popularity, so the generated image changes over
+   time; detected via the btttr.cc `ETag` (conditional `If-None-Match` request),
+3. **items whose poster was changed by Jellyfin itself** (detected via the
    `ImageTags.Primary` hash, which changes whenever the image changes).
 
 ## Ready-made image (public)
