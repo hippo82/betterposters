@@ -122,18 +122,14 @@ def get_fresh_tag(item_id, previous_tag=None):
     return None
 
 
-def upload_poster(item_id, item_name, imdb_id):
+def upload_poster(item_id, imdb_id):
     poster_url = f"https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg?lang={POSTER_LANG}"
-
-    print(f"Downloading poster for '{item_name}' ({imdb_id})...")
 
     try:
         poster_response = requests.get(poster_url, timeout=10)
         if poster_response.status_code != 200:
-            print(f"  -> Skipped: file not found on btttr.cc (HTTP {poster_response.status_code})")
             return False
-    except requests.exceptions.RequestException as e:
-        print(f"  -> Network error while downloading from btttr.cc: {e}")
+    except requests.exceptions.RequestException:
         return False
 
     base64_image = base64.b64encode(poster_response.content).decode('utf-8')
@@ -146,13 +142,9 @@ def upload_poster(item_id, item_name, imdb_id):
 
     try:
         upload_response = requests.post(upload_url, headers=upload_headers, data=base64_image, timeout=15)
-        if upload_response.status_code in (200, 204):
-            print("  -> Success! Poster updated.")
-            return True
-        print(f"  -> Jellyfin error: {upload_response.status_code} - {upload_response.text}")
-    except requests.exceptions.RequestException as e:
-        print(f"  -> Connection error while uploading to Jellyfin: {e}")
-    return False
+        return upload_response.status_code in (200, 204)
+    except requests.exceptions.RequestException:
+        return False
 
 
 def save_poster(conn, item_id, imdb_id, image_tag):
@@ -173,10 +165,8 @@ def save_poster(conn, item_id, imdb_id, image_tag):
 def run_once(force):
     conn = init_db()
     items = get_media_items()
-    print(f"Found {len(items)} items in the library.")
 
     fresh_tags = fetch_fresh_tags([item.get("Id") for item in items])
-    print(f"Fetched current poster tags: {len(fresh_tags)}.")
 
     updated = 0
     skipped = 0
@@ -184,12 +174,10 @@ def run_once(force):
 
     for item in items:
         item_id = item.get("Id")
-        item_name = item.get("Name")
         imdb_id = item.get("ProviderIds", {}).get("Imdb")
         current_tag = fresh_tags.get(item_id)
 
         if not imdb_id:
-            print(f"Skipped '{item_name}': no IMDb ID assigned.")
             continue
 
         row = conn.execute(
@@ -197,19 +185,10 @@ def run_once(force):
         ).fetchone()
 
         if not force and row and row[0] == current_tag:
-            print(f"Skipped '{item_name}': already updated.")
             skipped += 1
             continue
 
-        if force:
-            print(f"Forced update (--force) for '{item_name}'.")
-        elif row and row[0] != current_tag:
-            if current_tag:
-                print(f"Detected poster change by Jellyfin for '{item_name}' — updating again.")
-            else:
-                print(f"'{item_name}': poster missing — updating again.")
-
-        if upload_poster(item_id, item_name, imdb_id):
+        if upload_poster(item_id, imdb_id):
             new_tag = get_fresh_tag(item_id, current_tag)
             if new_tag is None:
                 new_tag = current_tag
@@ -219,7 +198,6 @@ def run_once(force):
             failed += 1
 
     conn.close()
-    print("=" * 50)
     print(f"Summary: updated {updated}, skipped {skipped}, errors {failed}.")
     return failed
 
