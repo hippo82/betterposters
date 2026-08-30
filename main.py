@@ -228,7 +228,8 @@ def save_poster(conn, item_id, imdb_id, image_tag, source_etag):
     conn.commit()
 
 
-def run_once(force):
+def run_once(force, reason="scheduled"):
+    print(f"Update started ({reason})...")
     conn = init_db()
     items = get_media_items()
 
@@ -289,6 +290,7 @@ def run_once(force):
 
     conn.close()
     print(f"Summary: updated {updated}, skipped {skipped}, errors {failed}.")
+    print(f"Update finished ({reason}).")
     global last_result
     last_result = {
         "updated": updated,
@@ -442,16 +444,18 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             return
         if not sync_lock.acquire(blocking=False):
             # an update is already running and will refresh posters anyway
+            print(f"API: refresh requested by {self._client_key()}, an update is already running")
             self._send(202, {"status": "already running"})
             return
 
         def worker():
             try:
                 # ETag-based update (same as the scheduled runs), not --force
-                run_once(force=False)
+                run_once(force=False, reason="api")
             finally:
                 sync_lock.release()
 
+        print(f"API: poster refresh triggered by {self._client_key()}")
         threading.Thread(target=worker, daemon=True).start()
         self._send(202, {"status": "refresh started"})
 
@@ -491,8 +495,9 @@ def main():
             print(f"Warning: could not start API server: {e}")
 
     while True:
+        reason = "force" if args.force else "scheduled"
         with sync_lock:
-            run_once(args.force)
+            run_once(args.force, reason=reason)
 
         if RUN_INTERVAL_MINUTES <= 0:
             break
