@@ -26,14 +26,28 @@ Configuration (.env file next to the script or environment variables):
   DB_PATH               path to the SQLite database (default: betterposters.db)
   POSTER_LANG           poster language for btttr.cc (default: en)
   RUN_INTERVAL_MINUTES  run every N minutes (0 = run once and exit)
+
+REST API (continuous mode only):
+  API_PORT              HTTP port for the API (default: 8080)
+  API_TOKEN             token required by POST /refresh (X-API-Token / Bearer)
+  API_RATE_LIMIT        max refresh requests per minute per client (default: 5)
+
+Endpoints:
+  GET  /health          Docker healthcheck; loopback (127.0.0.1) only, no token
+  GET  /status          last run summary (requires token)
+  POST /refresh         trigger a forced update (requires token, rate limited)
 """
 
 import argparse
 import base64
+import http.server
+import json
 import os
 import sqlite3
 import sys
+import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 import requests
@@ -49,10 +63,27 @@ POSTER_LANG = os.getenv("POSTER_LANG", "en")
 IDS_CHUNK = 100
 RUN_INTERVAL_MINUTES = int(os.getenv("RUN_INTERVAL_MINUTES", "0") or 0)
 
+API_PORT = int(os.getenv("API_PORT", "8080"))
+API_TOKEN = os.getenv("API_TOKEN", "")
+API_RATE_LIMIT = int(os.getenv("API_RATE_LIMIT", "5") or 5)
+
 headers = {
     "X-Emby-Token": API_KEY,
     "accept": "application/json",
 }
+
+# --- shared state for the HTTP API ---
+START_TIME = time.monotonic()
+sync_lock = threading.Lock()
+last_result = {
+    "updated": None,
+    "skipped": None,
+    "errors": None,
+    "last_run": None,
+    "uptime_seconds": None,
+}
+_rate_lock = threading.Lock()
+_rate_hits = {}  # client key -> deque of request timestamps
 
 
 def init_db():
@@ -244,7 +275,117 @@ def run_once(force):
 
     conn.close()
     print(f"Summary: updated {updated}, skipped {skipped}, errors {failed}.")
+    global last_result
+    last_result = {
+        "updated": updated,
+        "skipped": skipped,
+        "errors": failed,
+        "last_run": datetime.now(timezone.utc).isoformat(),
+        "uptime_seconds": int(time.monotonic() - START_TIME),
+    }
     return failed
+
+
+def _rate_limited(client_key):
+    """Simple fixed-window rate limit: API_RATE_LIMIT requests per minute."""
+    window = 60.0
+    now = time.monotonic()
+    with _rate_lock:
+        dq = _rate_hits.setdefault(client_key, deque())
+        while dq and now - dq[0] > window:
+            dq.popleft()
+        if len(dq) >= API_RATE_LIMIT:
+            return True
+        dq.append(now)
+        return False
+
+
+class ApiHandler(http.server.BaseHTTPRequestHandler):
+    server_version = "BetterPosters/1.0"
+
+    def log_message(self, fmt, *args):
+        # keep healthcheck polling out of the logs
+        if self.path.split("?")[0] not in ("/health", "/api/health"):
+            sys.stderr.write("api %s - %s\n" % (self.address_string(), fmt % args))
+
+    def _send(self, code, payload, retry_after=None):
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        if retry_after is not None:
+            self.send_header("Retry-After", str(retry_after))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _client_key(self):
+        xff = self.headers.get("CF-Connecting-IP") or self.headers.get("X-Forwarded-For")
+        if xff:
+            return xff.split(",")[0].strip()
+        return self.client_address[0]
+
+    def _is_loopback(self):
+        return self.client_address[0] in ("127.0.0.1", "::1")
+
+    def _token_ok(self):
+        token = self.headers.get("X-API-Token") or ""
+        auth = self.headers.get("Authorization") or ""
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+        return bool(API_TOKEN) and token == API_TOKEN
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path in ("/health", "/api/health"):
+            if self._is_loopback():
+                self._send(200, {"status": "ok", "uptime_seconds": int(time.monotonic() - START_TIME)})
+            else:
+                self._send(403, {"error": "healthcheck is loopback only"})
+        elif path in ("/status", "/api/status"):
+            if self._token_ok():
+                self._send(200, last_result)
+            else:
+                self._send(401, {"error": "unauthorized"})
+        else:
+            self._send(404, {"error": "not found"})
+
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        if path in ("/refresh", "/api/refresh"):
+            self._handle_refresh()
+        else:
+            self._send(404, {"error": "not found"})
+
+    def _handle_refresh(self):
+        if not API_TOKEN:
+            self._send(503, {"error": "API token not configured"})
+            return
+        if not self._token_ok():
+            self._send(401, {"error": "unauthorized"})
+            return
+        if _rate_limited(self._client_key()):
+            self._send(429, {"error": "rate limit exceeded"}, retry_after=60)
+            return
+        if not sync_lock.acquire(blocking=False):
+            self._send(409, {"error": "an update is already running"})
+            return
+
+        def worker():
+            try:
+                run_once(force=True)
+            finally:
+                sync_lock.release()
+
+        threading.Thread(target=worker, daemon=True).start()
+        self._send(202, {"status": "refresh started"})
+
+
+def start_http_server():
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", API_PORT), ApiHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"API listening on :{API_PORT}  "
+          f"(health: loopback only | status/refresh: token + rate limit)")
 
 
 def main():
@@ -265,9 +406,14 @@ def main():
 
     if RUN_INTERVAL_MINUTES > 0:
         print(f"Continuous mode: update every {RUN_INTERVAL_MINUTES} min.")
+        try:
+            start_http_server()
+        except OSError as e:
+            print(f"Warning: could not start API server: {e}")
 
     while True:
-        run_once(args.force)
+        with sync_lock:
+            run_once(args.force)
 
         if RUN_INTERVAL_MINUTES <= 0:
             break

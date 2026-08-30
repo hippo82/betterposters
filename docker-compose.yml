@@ -11,6 +11,8 @@ services:
     environment:
       # DB lives in the mounted directory so SQLite can create it on first run
       DB_PATH: /app/data/betterposters.db
+    ports:
+      - "${API_PORT:-8080}:8080"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

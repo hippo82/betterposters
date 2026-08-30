@@ -13,6 +13,11 @@ services:
       DB_PATH: /app/data/betterposters.db
       POSTER_LANG: en
       RUN_INTERVAL_MINUTES: "60"
+      API_PORT: "8080"
+      API_TOKEN: your-api-token
+      API_RATE_LIMIT: "5"
+    ports:
+      - "8080:8080"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

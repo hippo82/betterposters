@@ -70,6 +70,32 @@ python main.py --force    # update everything, ignoring the database
 
 Requires Python 3.13+ and `uv` (or `pip install requests python-dotenv`).
 
+## REST API
+
+In continuous mode (`RUN_INTERVAL_MINUTES > 0`) the container exposes a small
+HTTP API on port `API_PORT` (default `8080`):
+
+| Endpoint       | Auth                 | Purpose                                        |
+| -------------- | -------------------- | ---------------------------------------------- |
+| `GET /health`  | loopback (no token)  | Docker healthcheck; only reachable from inside the container |
+| `GET /status`  | `API_TOKEN`          | Last run summary (updated/skipped/errors, uptime) |
+| `POST /refresh`| `API_TOKEN`          | Trigger a forced poster update (rate limited)  |
+
+Authentication: send the token as `X-API-Token: <token>` or
+`Authorization: Bearer <token>`.
+
+`POST /refresh` is limited to `API_RATE_LIMIT` requests per minute per client
+(default `5`). When a run is already in progress it returns `409`.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8080/refresh -H "X-API-Token: your-api-token"
+```
+
+The refresh endpoint is intended to be exposed through your reverse proxy /
+Cloudflare; `/health` stays loopback-only for the Docker healthcheck.
+
 ## Project layout
 
 | File                            | Purpose                                            |
