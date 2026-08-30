@@ -85,7 +85,34 @@ Authentication: send the token as `X-API-Token: <token>` or
 `Authorization: Bearer <token>`.
 
 `POST /refresh` is limited to `API_RATE_LIMIT` requests per minute per client
-(default `5`). When a run is already in progress it returns `409`.
+(default `5`), with an additional global cap `API_GLOBAL_REFRESH_LIMIT`
+(default `20`/min). `GET /status` is limited to `API_STATUS_RATE_LIMIT`
+(default `30`/min). When a run is already in progress it returns `409`.
+
+Security hardening:
+
+- **Token comparison is timing-safe** (`hmac.compare_digest`).
+- **Failed-attempt lockout:** after `AUTH_FAIL_LIMIT` (default `5`) wrong
+  tokens within `AUTH_LOCKOUT_MINUTES` (default `10`), the client gets `403`
+  with `Retry-After`; a successful login resets the counter.
+- **Unknown HTTP methods return `405`** (`Allow: GET, POST`).
+- `/health` is loopback-only (Docker healthcheck).
+
+The container runs as the unprivileged user `PUID:PGID` (set in `.env`,
+default `1000`); the `data/` directory must be writable by that uid/gid.
+
+Generating a strong `API_TOKEN` (any of these):
+
+```bash
+openssl rand -hex 32
+openssl rand -base64 48
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+head -c 64 /dev/urandom | base64
+```
+
+Put the generated value in `.env` (`API_TOKEN=...`) or in the
+`docker-compose.inline.yml` `API_TOKEN` field. Tokens are compared with
+`hmac.compare_digest` (timing-safe).
 
 Example:
 

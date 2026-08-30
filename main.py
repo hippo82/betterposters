@@ -30,16 +30,21 @@ Configuration (.env file next to the script or environment variables):
 REST API (continuous mode only):
   API_PORT              HTTP port for the API (default: 8080)
   API_TOKEN             token required by POST /refresh (X-API-Token / Bearer)
-  API_RATE_LIMIT        max refresh requests per minute per client (default: 5)
+  API_RATE_LIMIT        max /refresh requests per minute per client (default: 5)
+  API_GLOBAL_REFRESH_LIMIT  max /refresh requests per minute globally (default: 20)
+  API_STATUS_RATE_LIMIT     max /status requests per minute per client (default: 30)
+  AUTH_FAIL_LIMIT           failed token attempts before lockout (default: 5)
+  AUTH_LOCKOUT_MINUTES      lockout window for failed attempts (default: 10)
 
 Endpoints:
   GET  /health          Docker healthcheck; loopback (127.0.0.1) only, no token
-  GET  /status          last run summary (requires token)
+  GET  /status          last run summary (requires token, rate limited)
   POST /refresh         trigger a forced update (requires token, rate limited)
 """
 
 import argparse
 import base64
+import hmac
 import http.server
 import json
 import os
@@ -66,6 +71,10 @@ RUN_INTERVAL_MINUTES = int(os.getenv("RUN_INTERVAL_MINUTES", "0") or 0)
 API_PORT = int(os.getenv("API_PORT", "8080"))
 API_TOKEN = os.getenv("API_TOKEN", "")
 API_RATE_LIMIT = int(os.getenv("API_RATE_LIMIT", "5") or 5)
+API_GLOBAL_REFRESH_LIMIT = int(os.getenv("API_GLOBAL_REFRESH_LIMIT", "20") or 20)
+API_STATUS_RATE_LIMIT = int(os.getenv("API_STATUS_RATE_LIMIT", "30") or 30)
+AUTH_FAIL_LIMIT = int(os.getenv("AUTH_FAIL_LIMIT", "5") or 5)
+AUTH_LOCKOUT_MINUTES = int(os.getenv("AUTH_LOCKOUT_MINUTES", "10") or 10)
 
 headers = {
     "X-Emby-Token": API_KEY,
@@ -83,7 +92,12 @@ last_result = {
     "uptime_seconds": None,
 }
 _rate_lock = threading.Lock()
-_rate_hits = {}  # client key -> deque of request timestamps
+# client key -> deque of request timestamps (sliding window)
+_refresh_hits = {}
+_status_hits = {}
+_refresh_global = {}
+_auth_failures = {}
+_STORE_MAX_KEYS = 5000
 
 
 def init_db():
@@ -286,18 +300,41 @@ def run_once(force):
     return failed
 
 
-def _rate_limited(client_key):
-    """Simple fixed-window rate limit: API_RATE_LIMIT requests per minute."""
-    window = 60.0
+def _rate_limited(key, store, limit, window=60.0):
+    """Sliding-window rate limit. Returns True when the request should be denied."""
     now = time.monotonic()
     with _rate_lock:
-        dq = _rate_hits.setdefault(client_key, deque())
+        dq = store.get(key)
+        if dq is None:
+            dq = deque()
+            store[key] = dq
         while dq and now - dq[0] > window:
             dq.popleft()
-        if len(dq) >= API_RATE_LIMIT:
+        if len(dq) >= limit:
             return True
         dq.append(now)
+        # keep the store bounded: drop keys with no recent activity
+        if len(store) > _STORE_MAX_KEYS:
+            for k in [k for k, q in store.items() if not q or now - q[-1] > window]:
+                store.pop(k, None)
         return False
+
+
+def _register_auth_failure(key):
+    """Record a failed token attempt; returns True once the lockout kicks in."""
+    now = time.monotonic()
+    window = AUTH_LOCKOUT_MINUTES * 60.0
+    with _rate_lock:
+        dq = _auth_failures.setdefault(key, deque())
+        while dq and now - dq[0] > window:
+            dq.popleft()
+        dq.append(now)
+        return len(dq) >= AUTH_FAIL_LIMIT
+
+
+def _clear_auth_failures(key):
+    with _rate_lock:
+        _auth_failures.pop(key, None)
 
 
 class ApiHandler(http.server.BaseHTTPRequestHandler):
@@ -308,13 +345,15 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
         if self.path.split("?")[0] not in ("/health", "/api/health"):
             sys.stderr.write("api %s - %s\n" % (self.address_string(), fmt % args))
 
-    def _send(self, code, payload, retry_after=None):
+    def _send(self, code, payload, retry_after=None, extra_headers=None):
         body = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         if retry_after is not None:
             self.send_header("Retry-After", str(retry_after))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -332,7 +371,31 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization") or ""
         if auth.lower().startswith("bearer "):
             token = auth[7:].strip()
-        return bool(API_TOKEN) and token == API_TOKEN
+        if not API_TOKEN or not token:
+            return False
+        # constant-time comparison to avoid timing attacks
+        return hmac.compare_digest(token, API_TOKEN)
+
+    def _auth_gate(self):
+        """Authenticate + failed-attempt lockout. Returns True when authorized."""
+        key = self._client_key()
+        if not API_TOKEN:
+            self._send(503, {"error": "API token not configured"})
+            return False
+        if self._token_ok():
+            _clear_auth_failures(key)
+            return True
+        if _register_auth_failure(key):
+            self._send(
+                403, {"error": "too many failed attempts"},
+                retry_after=AUTH_LOCKOUT_MINUTES * 60,
+            )
+        else:
+            self._send(401, {"error": "unauthorized"})
+        return False
+
+    def _method_not_allowed(self):
+        self._send(405, {"error": "method not allowed"}, extra_headers={"Allow": "GET, POST"})
 
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -341,13 +404,16 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
                 self._send(200, {"status": "ok", "uptime_seconds": int(time.monotonic() - START_TIME)})
             else:
                 self._send(403, {"error": "healthcheck is loopback only"})
-        elif path in ("/status", "/api/status"):
-            if self._token_ok():
-                self._send(200, last_result)
-            else:
-                self._send(401, {"error": "unauthorized"})
-        else:
-            self._send(404, {"error": "not found"})
+            return
+        if path in ("/status", "/api/status"):
+            if not self._auth_gate():
+                return
+            if _rate_limited(self._client_key(), _status_hits, API_STATUS_RATE_LIMIT):
+                self._send(429, {"error": "rate limit exceeded"}, retry_after=60)
+                return
+            self._send(200, last_result)
+            return
+        self._send(404, {"error": "not found"})
 
     def do_POST(self):
         path = self.path.split("?")[0]
@@ -357,14 +423,13 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def _handle_refresh(self):
-        if not API_TOKEN:
-            self._send(503, {"error": "API token not configured"})
+        if not self._auth_gate():
             return
-        if not self._token_ok():
-            self._send(401, {"error": "unauthorized"})
-            return
-        if _rate_limited(self._client_key()):
+        if _rate_limited(self._client_key(), _refresh_hits, API_RATE_LIMIT):
             self._send(429, {"error": "rate limit exceeded"}, retry_after=60)
+            return
+        if _rate_limited("__global__", _refresh_global, API_GLOBAL_REFRESH_LIMIT):
+            self._send(429, {"error": "global rate limit exceeded"}, retry_after=60)
             return
         if not sync_lock.acquire(blocking=False):
             self._send(409, {"error": "an update is already running"})
@@ -378,6 +443,9 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
 
         threading.Thread(target=worker, daemon=True).start()
         self._send(202, {"status": "refresh started"})
+
+    # reject unsupported methods explicitly
+    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = do_TRACE = _method_not_allowed
 
 
 def start_http_server():
