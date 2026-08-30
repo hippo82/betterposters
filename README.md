@@ -73,7 +73,8 @@ Requires Python 3.13+ and `uv` (or `pip install requests python-dotenv`).
 ## REST API
 
 In continuous mode (`RUN_INTERVAL_MINUTES > 0`) the container exposes a small
-HTTP API on port `API_PORT` (default `8080`):
+HTTP API on port `API_PORT`. The API is **enabled only when `API_PORT` is set**
+(leave it empty to disable; note that the Docker healthcheck requires it).
 
 | Endpoint       | Auth                 | Purpose                                        |
 | -------------- | -------------------- | ---------------------------------------------- |
@@ -130,7 +131,12 @@ Cloudflare; `/health` stays loopback-only for the Docker healthcheck.
 
 | File                            | Purpose                                            |
 | ------------------------------- | -------------------------------------------------- |
-| `main.py`                       | The updater script (sync logic + state)            |
+| `main.py`                       | Orchestration (run loop)                          |
+| `config.py`                     | Environment configuration                         |
+| `jellyfin.py`                   | Jellyfin API client                               |
+| `btttr.py`                      | btttr.cc poster source (ETag)                     |
+| `db.py`                         | SQLite persistence                                |
+| `api.py`                        | Optional REST API (loaded when `API_PORT` is set) |
 | `Dockerfile`                    | Container image definition                         |
 | `docker-compose.yml`            | Run container (pulls public image from GHCR)       |
 | `docker-compose.inline.yml`     | Standalone compose with inline parameters          |
