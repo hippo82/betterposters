@@ -79,15 +79,18 @@ HTTP API on port `API_PORT` (default `8080`):
 | -------------- | -------------------- | ---------------------------------------------- |
 | `GET /health`  | loopback (no token)  | Docker healthcheck; only reachable from inside the container |
 | `GET /status`  | `API_TOKEN`          | Last run summary (updated/skipped/errors, uptime) |
-| `POST /refresh`| `API_TOKEN`          | Trigger a forced poster update (rate limited)  |
+| `POST /refresh`| `API_TOKEN`          | Trigger an ETag-based update (rate limited)  |
 
 Authentication: send the token as `X-API-Token: <token>` or
 `Authorization: Bearer <token>`.
 
-`POST /refresh` is limited to `API_RATE_LIMIT` requests per minute per client
-(default `5`), with an additional global cap `API_GLOBAL_REFRESH_LIMIT`
-(default `20`/min). `GET /status` is limited to `API_STATUS_RATE_LIMIT`
-(default `30`/min). When a run is already in progress it returns `409`.
+`POST /refresh` runs the same ETag-based update as the scheduled runs (it does
+**not** force-upload every poster; use `--force` on the CLI for that). It is
+limited to `API_RATE_LIMIT` requests per minute per client (default `5`), with
+an additional global cap `API_GLOBAL_REFRESH_LIMIT` (default `20`/min).
+`GET /status` is limited to `API_STATUS_RATE_LIMIT` (default `30`/min). When a
+run is already in progress it returns `202 {"status": "already running"}`
+instead of starting a second run.
 
 Security hardening:
 

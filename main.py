@@ -39,7 +39,7 @@ REST API (continuous mode only):
 Endpoints:
   GET  /health          Docker healthcheck; loopback (127.0.0.1) only, no token
   GET  /status          last run summary (requires token, rate limited)
-  POST /refresh         trigger a forced update (requires token, rate limited)
+  POST /refresh         trigger an ETag-based update (requires token, rate limited)
 """
 
 import argparse
@@ -441,12 +441,14 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             self._send(429, {"error": "global rate limit exceeded"}, retry_after=60)
             return
         if not sync_lock.acquire(blocking=False):
-            self._send(409, {"error": "an update is already running"})
+            # an update is already running and will refresh posters anyway
+            self._send(202, {"status": "already running"})
             return
 
         def worker():
             try:
-                run_once(force=True)
+                # ETag-based update (same as the scheduled runs), not --force
+                run_once(force=False)
             finally:
                 sync_lock.release()
 
