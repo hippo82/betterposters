@@ -84,7 +84,9 @@ HTTP API on port `API_PORT`. The API is **enabled only when `API_PORT` is set**
 | `POST /refresh`| `API_TOKEN`          | Trigger an ETag-based update (rate limited)  |
 
 Authentication: send the token as `X-API-Token: <token>` or
-`Authorization: Bearer <token>`.
+`Authorization: Bearer <token>`. It can also be passed in the URL:
+`/refresh?token=<token>`. Note that a token in the URL ends up in access
+logs (nginx/Cloudflare), so prefer the header for public deployments.
 
 `POST /refresh` runs the same ETag-based update as the scheduled runs (it does
 **not** force-upload every poster; use `--force` on the CLI for that). It is

@@ -10,12 +10,16 @@ Endpoints:
 
 Configuration (in config.py):
   API_PORT              HTTP port; empty string disables the API
-  API_TOKEN             token required by POST /refresh (X-API-Token / Bearer)
+  API_TOKEN             token required by POST /refresh (X-API-Token / Bearer / ?token=)
   API_RATE_LIMIT        max /refresh per minute per client
   API_GLOBAL_REFRESH_LIMIT  max /refresh per minute globally
   API_STATUS_RATE_LIMIT     max /status per minute per client
   AUTH_FAIL_LIMIT           failed token attempts before lockout
   AUTH_LOCKOUT_MINUTES      lockout window for failed attempts
+
+The token can be supplied via the X-API-Token header, Authorization: Bearer,
+or the ?token= query parameter. Note: a token in the URL ends up in access
+logs, so prefer the header for public deployments.
 """
 
 import hmac
@@ -26,6 +30,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
+from urllib.parse import parse_qs
 
 from . import config
 
@@ -162,6 +167,8 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization") or ""
         if auth.lower().startswith("bearer "):
             token = auth[7:].strip()
+        if not token and "?" in self.path:
+            token = (parse_qs(self.path.split("?", 1)[1]).get("token") or [""])[0]
         if not config.API_TOKEN or not token:
             return False
         # constant-time comparison to avoid timing attacks
