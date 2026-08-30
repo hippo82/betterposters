@@ -32,7 +32,7 @@ from collections import deque
 from datetime import datetime
 from urllib.parse import parse_qs
 
-from . import config
+from . import config, db
 
 
 class ApiDeps:
@@ -134,6 +134,7 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             sys.stderr.write("api %s - %s\n" % (self.address_string(), fmt % args))
 
     def _send(self, code, payload, retry_after=None, extra_headers=None):
+        self._last_status = code
         body = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -146,12 +147,24 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_text(self, code, text):
+        self._last_status = code
         body = text.encode()
         self.send_response(code)
         self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _log_stats(self, path):
+        # healthcheck polls every ~30s, keep it out of the stats table
+        if path in ("/health", "/api/health"):
+            return
+        db.log_api_request(
+            endpoint=path,
+            method=self.command,
+            status=getattr(self, "_last_status", 0),
+            client=self._client_key(),
+        )
 
     def _client_key(self):
         xff = self.headers.get("CF-Connecting-IP") or self.headers.get("X-Forwarded-For")
@@ -227,6 +240,7 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             self._handle_metrics()
         else:
             self._send(404, {"error": "not found"})
+        self._log_stats(path)
 
     def do_POST(self):
         path = self.path.split("?")[0]
@@ -240,6 +254,7 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             self._handle_health()
         else:
             self._send(404, {"error": "not found"})
+        self._log_stats(path)
 
     def _handle_refresh(self):
         if not self._auth_gate():

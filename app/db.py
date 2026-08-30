@@ -21,8 +21,45 @@ def init_db():
         conn.execute("ALTER TABLE posters ADD COLUMN source_etag TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS api_stats (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint   TEXT,
+            method     TEXT,
+            status     INTEGER,
+            client     TEXT,
+            created_at TEXT
+        )
+    """)
     conn.commit()
     return conn
+
+
+def log_api_request(endpoint, method, status, client):
+    """Best-effort record of an API request (never raises)."""
+    try:
+        conn = sqlite3.connect(config.DB_PATH, timeout=10)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS api_stats (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    endpoint   TEXT,
+                    method     TEXT,
+                    status     INTEGER,
+                    client     TEXT,
+                    created_at TEXT
+                )
+            """)
+            conn.execute(
+                "INSERT INTO api_stats (endpoint, method, status, client, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (endpoint, method, status, client, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
 
 
 def save_poster(conn, item_id, imdb_id, image_tag, source_etag):
