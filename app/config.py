@@ -13,6 +13,8 @@ DB_PATH = os.getenv("DB_PATH", "betterposters.db")
 POSTER_LANG = os.getenv("POSTER_LANG", "en")
 IDS_CHUNK = 100
 RUN_INTERVAL_MINUTES = int(os.getenv("RUN_INTERVAL_MINUTES", "0") or 0)
+# number of threads used to check btttr.cc ETags in parallel
+CHECK_WORKERS = int(os.getenv("CHECK_WORKERS", "10") or 10)
 
 # --- REST API ("" = API disabled) ---
 API_PORT = os.getenv("API_PORT", "")

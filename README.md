@@ -79,7 +79,8 @@ HTTP API on port `API_PORT`. The API is **enabled only when `API_PORT` is set**
 | Endpoint       | Auth                 | Purpose                                        |
 | -------------- | -------------------- | ---------------------------------------------- |
 | `GET /health`  | loopback (no token)  | Docker healthcheck; only reachable from inside the container |
-| `GET /status`  | `API_TOKEN`          | Last run summary (updated/skipped/errors, uptime) |
+| `GET /status`  | `API_TOKEN`          | Last run summary (by type, timestamps, duration) |
+| `GET /metrics` | `API_TOKEN`          | Prometheus metrics (text/plain)               |
 | `POST /refresh`| `API_TOKEN`          | Trigger an ETag-based update (rate limited)  |
 
 Authentication: send the token as `X-API-Token: <token>` or
@@ -104,6 +105,19 @@ Security hardening:
 
 The container runs as the unprivileged user `PUID:PGID` (set in `.env`,
 default `1000`); the `data/` directory must be writable by that uid/gid.
+
+Operational notes:
+
+- **Parallel checks:** btttr.cc ETags are checked with `CHECK_WORKERS` threads
+  (default `10`), so a full library check is fast.
+- **Pruning:** DB rows for items that are no longer in the Jellyfin library
+  are removed automatically at the end of each run.
+- **Graceful shutdown:** `SIGTERM`/`SIGINT` stops the run between items, closes
+  cleanly and exits.
+- **Single instance:** a file lock (next to the database) prevents two
+  instances from running against the same database.
+- `/status` and `/metrics` report the last run split by movie/series, the next
+  scheduled run time and the run duration.
 
 Generating a strong `API_TOKEN` (any of these):
 

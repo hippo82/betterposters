@@ -21,69 +21,117 @@ Usage:
 """
 
 import argparse
+import fcntl
+import os
+import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone, timedelta
 
 from . import btttr, config, db, jellyfin
 
 START_TIME = time.monotonic()
 sync_lock = threading.Lock()
+shutdown_event = threading.Event()
+_lock_fd = None
+
 last_result = {
     "updated": None,
     "skipped": None,
     "errors": None,
+    "updated_movies": None,
+    "skipped_movies": None,
+    "errors_movies": None,
+    "updated_series": None,
+    "skipped_series": None,
+    "errors_series": None,
     "last_run": None,
+    "next_run_at": None,
+    "duration_seconds": None,
     "uptime_seconds": None,
 }
 
 
 def run_once(force, reason="scheduled"):
+    started = time.monotonic()
     print(f"Update started ({reason})...")
     conn = db.init_db()
     items = jellyfin.get_media_items()
 
     fresh_tags = jellyfin.fetch_fresh_tags([item.get("Id") for item in items])
 
-    updated = 0
-    skipped = 0
-    failed = 0
+    rows = {
+        item_id: (tag, etag)
+        for item_id, tag, etag in conn.execute(
+            "SELECT item_id, image_tag, source_etag FROM posters"
+        )
+    }
 
+    # --- phase 1: parallel btttr.cc ETag checks ---
+    tasks = []
     for item in items:
         item_id = item.get("Id")
         imdb_id = item.get("ProviderIds", {}).get("Imdb")
-        current_tag = fresh_tags.get(item_id)
-
         if not imdb_id:
             continue
+        db_tag, db_etag = rows.get(item_id, (None, None))
+        tasks.append((item, imdb_id, db_tag, db_etag))
 
-        row = conn.execute(
-            "SELECT image_tag, source_etag FROM posters WHERE item_id = ?", (item_id,)
-        ).fetchone()
-        db_tag = row[0] if row else None
-        db_etag = row[1] if row else None
+    def check(task):
+        item, imdb_id, db_tag, db_etag = task
+        if force:
+            status, data, etag = btttr.fetch_poster(imdb_id, None)
+        else:
+            status, data, etag = btttr.fetch_poster(imdb_id, db_etag)
+        return item, imdb_id, db_tag, db_etag, status, data, etag
+
+    with ThreadPoolExecutor(max_workers=config.CHECK_WORKERS) as pool:
+        results = list(pool.map(check, tasks))
+
+    # --- phase 2: sequential processing (uploads + DB writes) ---
+    by_type = {
+        "Movie": {"updated": 0, "skipped": 0, "errors": 0},
+        "Series": {"updated": 0, "skipped": 0, "errors": 0},
+    }
+    updated = skipped = failed = 0
+
+    def bump(itype, key):
+        nonlocal updated, skipped, failed
+        by_type.setdefault(itype, {"updated": 0, "skipped": 0, "errors": 0})[key] += 1
+        if key == "updated":
+            updated += 1
+        elif key == "skipped":
+            skipped += 1
+        else:
+            failed += 1
+
+    for item, imdb_id, db_tag, db_etag, status, data, new_etag in results:
+        if shutdown_event.is_set():
+            print("Shutdown requested, stopping between items.")
+            break
+        item_id = item.get("Id")
+        current_tag = fresh_tags.get(item_id)
+        itype = item.get("Type") or "unknown"
 
         if force:
-            status, data, new_etag = btttr.fetch_poster(imdb_id, None)
             if status == "changed" and jellyfin.upload_image(item_id, data):
                 db.save_poster(conn, item_id, imdb_id,
                                jellyfin.get_fresh_tag(item_id, current_tag) or current_tag,
                                new_etag or db_etag)
-                updated += 1
+                bump(itype, "updated")
             else:
-                failed += 1
+                bump(itype, "errors")
             continue
 
-        status, data, new_etag = btttr.fetch_poster(imdb_id, db_etag)
-
         if status == "error":
-            failed += 1
+            bump(itype, "errors")
             continue
 
         if status == "unchanged":
             if db_tag == current_tag:
-                skipped += 1
+                bump(itype, "skipped")
                 continue
             # Jellyfin replaced the poster -> restore the current btttr version
             status2, data2, _ = btttr.fetch_poster(imdb_id, None)
@@ -91,9 +139,9 @@ def run_once(force, reason="scheduled"):
                 db.save_poster(conn, item_id, imdb_id,
                                jellyfin.get_fresh_tag(item_id, current_tag) or current_tag,
                                db_etag)
-                updated += 1
+                bump(itype, "updated")
             else:
-                failed += 1
+                bump(itype, "errors")
             continue
 
         # source changed (ratings / popularity) or new item -> upload
@@ -101,22 +149,62 @@ def run_once(force, reason="scheduled"):
             db.save_poster(conn, item_id, imdb_id,
                            jellyfin.get_fresh_tag(item_id, current_tag) or current_tag,
                            new_etag or db_etag)
-            updated += 1
+            bump(itype, "updated")
         else:
-            failed += 1
+            bump(itype, "errors")
+
+    # --- prune DB rows for items no longer in the library ---
+    known_ids = {item.get("Id") for item in items}
+    db_ids = {row[0] for row in conn.execute("SELECT item_id FROM posters")}
+    stale = db_ids - known_ids
+    for sid in stale:
+        conn.execute("DELETE FROM posters WHERE item_id = ?", (sid,))
+    if stale:
+        conn.commit()
+        print(f"Pruned {len(stale)} stale row(s) (items no longer in the library).")
 
     conn.close()
     print(f"Summary: updated {updated}, skipped {skipped}, errors {failed}.")
     print(f"Update finished ({reason}).")
+
+    now = datetime.now(timezone.utc)
     last_result.clear()
     last_result.update({
         "updated": updated,
         "skipped": skipped,
         "errors": failed,
-        "last_run": datetime.now(timezone.utc).isoformat(),
+        "updated_movies": by_type["Movie"]["updated"],
+        "skipped_movies": by_type["Movie"]["skipped"],
+        "errors_movies": by_type["Movie"]["errors"],
+        "updated_series": by_type["Series"]["updated"],
+        "skipped_series": by_type["Series"]["skipped"],
+        "errors_series": by_type["Series"]["errors"],
+        "last_run": now.isoformat(),
+        "next_run_at": (now + timedelta(minutes=config.RUN_INTERVAL_MINUTES)).isoformat()
+        if config.RUN_INTERVAL_MINUTES > 0 else None,
+        "duration_seconds": int(time.monotonic() - started),
         "uptime_seconds": int(time.monotonic() - START_TIME),
     })
     return failed
+
+
+def _handle_signal(signum, frame):
+    print("Shutdown requested...")
+    shutdown_event.set()
+
+
+def _acquire_file_lock():
+    """Prevent a second instance from running against the same database."""
+    global _lock_fd
+    lock_path = config.DB_PATH + ".lock"
+    _lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("Another instance is already running (lock held). Exiting.")
+        sys.exit(1)
+    _lock_fd.write(str(os.getpid()))
+    _lock_fd.flush()
 
 
 def main():
@@ -126,6 +214,10 @@ def main():
     if not config.SERVER_URL or not config.API_KEY:
         print("Error: SERVER_URL and/or API_KEY are not configured. Fill in the .env file.")
         sys.exit(1)
+
+    _acquire_file_lock()
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
 
     parser = argparse.ArgumentParser(description="BetterPosters")
     parser.add_argument(
@@ -150,7 +242,7 @@ def main():
             except OSError as e:
                 print(f"Warning: could not start API server: {e}")
 
-    while True:
+    while not shutdown_event.is_set():
         reason = "force" if args.force else "scheduled"
         with sync_lock:
             run_once(args.force, reason=reason)
@@ -158,8 +250,12 @@ def main():
         if config.RUN_INTERVAL_MINUTES <= 0:
             break
 
+        deadline = time.monotonic() + config.RUN_INTERVAL_MINUTES * 60
         print(f"Next run in {config.RUN_INTERVAL_MINUTES} min...")
-        time.sleep(config.RUN_INTERVAL_MINUTES * 60)
+        while not shutdown_event.is_set() and time.monotonic() < deadline:
+            time.sleep(1)
+
+    print("Shutdown complete.")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ Loaded lazily by main.py, only when API_PORT is set in the environment.
 Endpoints:
   GET  /health          Docker healthcheck; loopback (127.0.0.1) only, no token
   GET  /status          last run summary (requires token, rate limited)
+  GET  /metrics         Prometheus metrics (requires token, rate limited)
   POST /refresh         trigger an ETag-based update (requires token, rate limited)
 
 Configuration (in config.py):
@@ -24,6 +25,7 @@ import sys
 import threading
 import time
 from collections import deque
+from datetime import datetime
 
 from . import config
 
@@ -84,6 +86,36 @@ def _clear_auth_failures(key):
         _auth_failures.pop(key, None)
 
 
+def _iso_to_ts(iso):
+    if not iso:
+        return 0
+    try:
+        return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
+    except (ValueError, TypeError):
+        return 0
+
+
+def _metrics_text(result, start_time):
+    """Prometheus text exposition of the last run."""
+    g = "betterposters_{name} {value}\n"
+    family = (
+        "# HELP betterposters_{name} Posters {what} in the last run.\n"
+        "# TYPE betterposters_{name} gauge\n"
+    )
+    out = []
+    for name, what in (("updated", "updated"), ("skipped", "skipped"), ("errors", "errored")):
+        out.append(family.format(name=name, what=what))
+        out.append(g.format(name=name, value=result.get(name) or 0))
+        out.append(g.format(name=name + '{type="movie"}', value=result.get(name + "_movies") or 0))
+        out.append(g.format(name=name + '{type="series"}', value=result.get(name + "_series") or 0))
+    out.append(family.format(name="last_run_timestamp_seconds", what="updated"))
+    out.append(g.format(name="last_run_timestamp_seconds", value=_iso_to_ts(result.get("last_run"))))
+    out.append(g.format(name="next_run_timestamp_seconds", value=_iso_to_ts(result.get("next_run_at"))))
+    out.append(g.format(name="duration_seconds", value=result.get("duration_seconds") or 0))
+    out.append(g.format(name="uptime_seconds", value=int(time.monotonic() - start_time)))
+    return "".join(out)
+
+
 class ApiHandler(http.server.BaseHTTPRequestHandler):
     server_version = "BetterPosters/1.0"
 
@@ -105,6 +137,14 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Retry-After", str(retry_after))
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_text(self, code, text):
+        body = text.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
@@ -162,12 +202,22 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             return
         self._send(200, self.deps.last_result)
 
+    def _handle_metrics(self):
+        if not self._auth_gate():
+            return
+        if _rate_limited(self._client_key(), _status_hits, config.API_STATUS_RATE_LIMIT):
+            self._send(429, {"error": "rate limit exceeded"}, retry_after=60)
+            return
+        self._send_text(200, _metrics_text(self.deps.last_result, self.deps.start_time))
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/health", "/api/health"):
             self._handle_health()
         elif path in ("/status", "/api/status"):
             self._handle_status()
+        elif path in ("/metrics", "/api/metrics"):
+            self._handle_metrics()
         else:
             self._send(404, {"error": "not found"})
 
@@ -177,6 +227,8 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             self._handle_refresh()
         elif path in ("/status", "/api/status"):
             self._handle_status()
+        elif path in ("/metrics", "/api/metrics"):
+            self._handle_metrics()
         elif path in ("/health", "/api/health"):
             self._handle_health()
         else:

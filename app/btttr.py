@@ -1,10 +1,21 @@
 """btttr.cc poster source client."""
 
+import threading
+
 import requests
 
 from . import config
 
-SESSION = requests.Session()
+# thread-local sessions so parallel checks each reuse their own connection pool
+_tls = threading.local()
+
+
+def _session():
+    s = getattr(_tls, "session", None)
+    if s is None:
+        s = requests.Session()
+        _tls.session = s
+    return s
 
 
 def fetch_poster(imdb_id, etag=None):
@@ -18,7 +29,7 @@ def fetch_poster(imdb_id, etag=None):
     poster_url = f"https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg?lang={config.POSTER_LANG}"
     request_headers = {"If-None-Match": etag} if etag else {}
     try:
-        response = SESSION.get(poster_url, headers=request_headers, timeout=10)
+        response = _session().get(poster_url, headers=request_headers, timeout=10)
     except requests.exceptions.RequestException:
         return "error", None, None
 
