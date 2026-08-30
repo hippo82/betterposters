@@ -163,7 +163,6 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             endpoint=path,
             method=self.command,
             status=getattr(self, "_last_status", 0),
-            client=self._client_key(),
         )
 
     def _client_key(self):
