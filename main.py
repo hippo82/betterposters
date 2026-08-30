@@ -397,28 +397,37 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
     def _method_not_allowed(self):
         self._send(405, {"error": "method not allowed"}, extra_headers={"Allow": "GET, POST"})
 
+    def _handle_health(self):
+        if self._is_loopback():
+            self._send(200, {"status": "ok", "uptime_seconds": int(time.monotonic() - START_TIME)})
+        else:
+            self._send(403, {"error": "healthcheck is loopback only"})
+
+    def _handle_status(self):
+        if not self._auth_gate():
+            return
+        if _rate_limited(self._client_key(), _status_hits, API_STATUS_RATE_LIMIT):
+            self._send(429, {"error": "rate limit exceeded"}, retry_after=60)
+            return
+        self._send(200, last_result)
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/health", "/api/health"):
-            if self._is_loopback():
-                self._send(200, {"status": "ok", "uptime_seconds": int(time.monotonic() - START_TIME)})
-            else:
-                self._send(403, {"error": "healthcheck is loopback only"})
-            return
-        if path in ("/status", "/api/status"):
-            if not self._auth_gate():
-                return
-            if _rate_limited(self._client_key(), _status_hits, API_STATUS_RATE_LIMIT):
-                self._send(429, {"error": "rate limit exceeded"}, retry_after=60)
-                return
-            self._send(200, last_result)
-            return
-        self._send(404, {"error": "not found"})
+            self._handle_health()
+        elif path in ("/status", "/api/status"):
+            self._handle_status()
+        else:
+            self._send(404, {"error": "not found"})
 
     def do_POST(self):
         path = self.path.split("?")[0]
         if path in ("/refresh", "/api/refresh"):
             self._handle_refresh()
+        elif path in ("/status", "/api/status"):
+            self._handle_status()
+        elif path in ("/health", "/api/health"):
+            self._handle_health()
         else:
             self._send(404, {"error": "not found"})
 
