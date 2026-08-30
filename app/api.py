@@ -25,7 +25,7 @@ import threading
 import time
 from collections import deque
 
-import config
+from . import config
 
 
 class ApiDeps:

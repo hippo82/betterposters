@@ -131,12 +131,14 @@ Cloudflare; `/health` stays loopback-only for the Docker healthcheck.
 
 | File                            | Purpose                                            |
 | ------------------------------- | -------------------------------------------------- |
-| `main.py`                       | Orchestration (run loop)                          |
-| `config.py`                     | Environment configuration                         |
-| `jellyfin.py`                   | Jellyfin API client                               |
-| `btttr.py`                      | btttr.cc poster source (ETag)                     |
-| `db.py`                         | SQLite persistence                                |
-| `api.py`                        | Optional REST API (loaded when `API_PORT` is set) |
+| `main.py`                       | Entry point (thin launcher)                       |
+| `app/`                          | Application package                               |
+| `app/main.py`                   | Orchestration (run loop)                          |
+| `app/config.py`                 | Environment configuration                         |
+| `app/jellyfin.py`               | Jellyfin API client                               |
+| `app/btttr.py`                  | btttr.cc poster source (ETag)                     |
+| `app/db.py`                     | SQLite persistence                                |
+| `app/api.py`                    | Optional REST API (loaded when `API_PORT` is set) |
 | `Dockerfile`                    | Container image definition                         |
 | `docker-compose.yml`            | Run container (pulls public image from GHCR)       |
 | `docker-compose.inline.yml`     | Standalone compose with inline parameters          |

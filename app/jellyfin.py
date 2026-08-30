@@ -5,7 +5,7 @@ import time
 
 import requests
 
-import config
+from . import config
 
 SESSION = requests.Session()
 

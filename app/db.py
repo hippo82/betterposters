@@ -3,7 +3,7 @@
 import sqlite3
 from datetime import datetime, timezone
 
-import config
+from . import config
 
 
 def init_db():

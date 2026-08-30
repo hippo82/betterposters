@@ -5,6 +5,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 COPY *.py ./
+COPY app/ ./app/
 
 RUN pip install --no-cache-dir requests python-dotenv \
     && mkdir -p /app/data

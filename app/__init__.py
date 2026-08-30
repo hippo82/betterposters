@@ -1,0 +1,1 @@
+"""BetterPosters application package."""
