@@ -3,6 +3,7 @@ name: Build and push Docker image
 on:
   push:
     branches: [main]
+    tags: ['v*']
 
 jobs:
   build-and-push:
@@ -24,11 +25,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute image tags
+        id: tags
+        run: |
+          REPO=ghcr.io/${{ github.repository }}
+          TAGS="$REPO:latest,$REPO:${{ github.sha }}"
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAGS="$TAGS,$REPO:${{ github.ref_name }}"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.tags }}

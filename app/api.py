@@ -171,6 +171,9 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             return xff.split(",")[0].strip()
         return self.client_address[0]
 
+    def _client_name(self):
+        return self.headers.get("X-Client") or "unknown"
+
     def _is_loopback(self):
         return self.client_address[0] in ("127.0.0.1", "::1")
 
@@ -266,7 +269,8 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             return
         if not self.deps.sync_lock.acquire(blocking=False):
             # an update is already running and will refresh posters anyway
-            print(f"API: refresh requested by {self._client_key()}, an update is already running")
+            print(f"API: refresh requested by {self._client_key()} "
+                  f"[client={self._client_name()}], an update is already running")
             self._send(202, {"status": "already running"})
             return
 
@@ -277,7 +281,8 @@ class ApiHandler(http.server.BaseHTTPRequestHandler):
             finally:
                 self.deps.sync_lock.release()
 
-        print(f"API: poster refresh triggered by {self._client_key()}")
+        print(f"API: poster refresh triggered by {self._client_key()} "
+              f"[client={self._client_name()}]")
         threading.Thread(target=worker, daemon=True).start()
         self._send(202, {"status": "refresh started"})
 
