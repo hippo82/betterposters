@@ -54,13 +54,46 @@ last_result = {
 }
 
 
+def _publish_result(updated, skipped, failed, started, by_type=None):
+    now = datetime.now(timezone.utc)
+    last_result.clear()
+    last_result.update({
+        "updated": updated,
+        "skipped": skipped,
+        "errors": failed,
+        "updated_movies": (by_type or {}).get("Movie", {}).get("updated", 0),
+        "skipped_movies": (by_type or {}).get("Movie", {}).get("skipped", 0),
+        "errors_movies": (by_type or {}).get("Movie", {}).get("errors", 0),
+        "updated_series": (by_type or {}).get("Series", {}).get("updated", 0),
+        "skipped_series": (by_type or {}).get("Series", {}).get("skipped", 0),
+        "errors_series": (by_type or {}).get("Series", {}).get("errors", 0),
+        "last_run": now.isoformat(),
+        "next_run_at": (now + timedelta(minutes=config.RUN_INTERVAL_MINUTES)).isoformat()
+        if config.RUN_INTERVAL_MINUTES > 0 else None,
+        "duration_seconds": int(time.monotonic() - started),
+        "uptime_seconds": int(time.monotonic() - START_TIME),
+    })
+
+
 def run_once(force, reason="scheduled"):
     started = time.monotonic()
     print(f"Update started ({reason})...")
     conn = db.init_db()
     items = jellyfin.get_media_items()
 
+    if items is None:
+        print("Jellyfin library unreachable — skipping run (no pruning).")
+        conn.close()
+        _publish_result(0, 0, 1, started)
+        return 1
+
     fresh_tags = jellyfin.fetch_fresh_tags([item.get("Id") for item in items])
+
+    if fresh_tags is None:
+        print("Jellyfin tag fetch failed — skipping run (no pruning).")
+        conn.close()
+        _publish_result(0, 0, 1, started)
+        return 1
 
     rows = {
         item_id: (tag, etag)
@@ -166,25 +199,7 @@ def run_once(force, reason="scheduled"):
     conn.close()
     print(f"Summary: updated {updated}, skipped {skipped}, errors {failed}.")
     print(f"Update finished ({reason}).")
-
-    now = datetime.now(timezone.utc)
-    last_result.clear()
-    last_result.update({
-        "updated": updated,
-        "skipped": skipped,
-        "errors": failed,
-        "updated_movies": by_type["Movie"]["updated"],
-        "skipped_movies": by_type["Movie"]["skipped"],
-        "errors_movies": by_type["Movie"]["errors"],
-        "updated_series": by_type["Series"]["updated"],
-        "skipped_series": by_type["Series"]["skipped"],
-        "errors_series": by_type["Series"]["errors"],
-        "last_run": now.isoformat(),
-        "next_run_at": (now + timedelta(minutes=config.RUN_INTERVAL_MINUTES)).isoformat()
-        if config.RUN_INTERVAL_MINUTES > 0 else None,
-        "duration_seconds": int(time.monotonic() - started),
-        "uptime_seconds": int(time.monotonic() - START_TIME),
-    })
+    _publish_result(updated, skipped, failed, started, by_type)
     return failed
 
 

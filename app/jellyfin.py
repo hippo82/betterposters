@@ -15,21 +15,29 @@ def _headers():
 
 
 def get_media_items():
+    """Returns the library items, or None when Jellyfin is unreachable/errors."""
     url = f"{config.SERVER_URL}/Items"
     params = {
         "IncludeItemTypes": "Movie,Series",
         "Fields": "ProviderIds",
         "Recursive": "true",
     }
-    response = SESSION.get(url, headers=_headers(), params=params, timeout=30)
+    try:
+        response = SESSION.get(url, headers=_headers(), params=params, timeout=30)
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching library from Jellyfin: {e}")
+        return None
     if response.status_code == 200:
         return response.json().get("Items", [])
     print(f"Error fetching library from Jellyfin: {response.status_code}")
-    return []
+    return None
 
 
 def fetch_fresh_tags(item_ids):
-    """Fetch current ImageTags.Primary for a list of ids (batched in chunks)."""
+    """Fetch current ImageTags.Primary for a list of ids (batched in chunks).
+
+    Returns None when no tags could be fetched at all (Jellyfin unreachable).
+    """
     result = {}
     for i in range(0, len(item_ids), config.IDS_CHUNK):
         chunk = item_ids[i:i + config.IDS_CHUNK]
@@ -45,6 +53,8 @@ def fetch_fresh_tags(item_ids):
         if response.status_code == 200:
             for item in response.json().get("Items", []):
                 result[item.get("Id")] = item.get("ImageTags", {}).get("Primary")
+    if item_ids and not result:
+        return None
     return result
 
 
