@@ -6,6 +6,9 @@ data/
 # Prototype / Maintainerr integration (work in progress, not pushed)
 overlay/
 
+# v2 multi-server version (local only, not pushed)
+v2/
+
 # Local utility (not pushed to GitHub)
 force_update.py
 
