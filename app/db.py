@@ -32,26 +32,9 @@ def init_db():
         conn.execute("ALTER TABLE posters ADD COLUMN source_etag TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists
-    _migrate_api_stats(conn)
     conn.execute(API_STATS_SCHEMA)
     conn.commit()
     return conn
-
-
-def _migrate_api_stats(conn):
-    """Convert the old per-request api_stats table to the aggregated format."""
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(api_stats)")]
-    if cols and "count" not in cols:
-        conn.execute("ALTER TABLE api_stats RENAME TO api_stats_old")
-        conn.execute(API_STATS_SCHEMA)
-        conn.execute(
-            """
-            INSERT INTO api_stats (endpoint, method, status, count, updated_at)
-            SELECT endpoint, method, status, COUNT(*), MAX(created_at)
-            FROM api_stats_old GROUP BY endpoint, method, status
-            """
-        )
-        conn.execute("DROP TABLE api_stats_old")
 
 
 def log_api_request(endpoint, method, status):
