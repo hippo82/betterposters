@@ -11,7 +11,7 @@ SESSION = requests.Session()
 
 
 def _headers():
-    return {"X-Emby-Token": config.API_KEY, "accept": "application/json"}
+    return {"Authorization": f'MediaBrowser Token="{config.API_KEY}"', "accept": "application/json"}
 
 
 def get_media_items():
@@ -84,7 +84,7 @@ def get_fresh_tag(item_id, previous_tag=None):
 def upload_image(item_id, image_bytes):
     upload_url = f"{config.SERVER_URL}/Items/{item_id}/Images/Primary"
     upload_headers = {
-        "X-Emby-Token": config.API_KEY,
+        "Authorization": f'MediaBrowser Token="{config.API_KEY}"',
         "Content-Type": "image/jpeg",
     }
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
