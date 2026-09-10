@@ -11,10 +11,19 @@ SERVER_URL = os.getenv("SERVER_URL", "").rstrip("/")
 API_KEY = os.getenv("API_KEY", "")
 DB_PATH = os.getenv("DB_PATH", "betterposters.db")
 POSTER_LANG = os.getenv("POSTER_LANG", "en")
+# also refresh Season posters with their series poster (home screen shows
+# season covers for series, e.g. "Recently Added")
+UPDATE_SEASONS = os.getenv("UPDATE_SEASONS", "true").lower() not in ("0", "false", "no", "")
 IDS_CHUNK = 100
 RUN_INTERVAL_MINUTES = int(os.getenv("RUN_INTERVAL_MINUTES", "0") or 0)
 # number of threads used to check btttr.cc ETags in parallel
 CHECK_WORKERS = int(os.getenv("CHECK_WORKERS", "10") or 10)
+
+# --- Logging ---
+# console (container log) level; errors are always written
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# optional path to also append log lines to a file ("" = stdout only)
+LOG_FILE = os.getenv("LOG_FILE", "")
 
 # --- REST API ("" = API disabled) ---
 API_PORT = os.getenv("API_PORT", "")

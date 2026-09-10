@@ -22,6 +22,7 @@ Usage:
 
 import argparse
 import fcntl
+import logging
 import os
 import signal
 import sys
@@ -36,6 +37,42 @@ START_TIME = time.monotonic()
 sync_lock = threading.Lock()
 shutdown_event = threading.Event()
 _lock_fd = None
+
+logger = logging.getLogger(__name__)
+_logging_configured = False
+
+
+def _setup_logging():
+    """Configure logging once: console always, plus an optional log file."""
+    global _logging_configured
+    if _logging_configured:
+        return
+    level = getattr(logging, (config.LOG_LEVEL or "INFO").upper(), logging.INFO)
+    handlers = [logging.StreamHandler()]
+    if config.LOG_FILE:
+        try:
+            handlers.append(logging.FileHandler(config.LOG_FILE))
+        except OSError as e:
+            print(f"Warning: could not open log file {config.LOG_FILE}: {e}")
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
+    _logging_configured = True
+
+
+def _log_item_error(item, imdb_id, reason):
+    """Write a detailed, greppable line for an item that could not be updated."""
+    logger.error(
+        "Update failed: %s '%s' (imdb=%s, id=%s): %s",
+        item.get("Type") or "unknown",
+        item.get("Name"),
+        imdb_id or "-",
+        item.get("Id"),
+        reason,
+    )
+
 
 last_result = {
     "updated": None,
@@ -76,6 +113,8 @@ def _publish_result(updated, skipped, failed, started, by_type=None):
 
 
 def run_once(force, reason="scheduled"):
+    _setup_logging()
+    btttr.clear_cache()
     started = time.monotonic()
     print(f"Update started ({reason})...")
     conn = db.init_db()
@@ -155,11 +194,19 @@ def run_once(force, reason="scheduled"):
                                new_etag or db_etag)
                 bump(itype, "updated")
             else:
+                _log_item_error(item, imdb_id,
+                                f"force upload failed (source status: {status})")
                 bump(itype, "errors")
             continue
 
         if status == "error":
-            bump(itype, "errors")
+            if itype == "Season":
+                # a season reuses its series poster; a missing/broken source
+                # poster is reported once for the series, not per season
+                bump(itype, "skipped")
+            else:
+                _log_item_error(item, imdb_id, "btttr.cc source returned an error")
+                bump(itype, "errors")
             continue
 
         if status == "unchanged":
@@ -174,6 +221,8 @@ def run_once(force, reason="scheduled"):
                                db_etag)
                 bump(itype, "updated")
             else:
+                _log_item_error(item, imdb_id,
+                                f"restore upload failed (source status: {status2})")
                 bump(itype, "errors")
             continue
 
@@ -184,6 +233,7 @@ def run_once(force, reason="scheduled"):
                            new_etag or db_etag)
             bump(itype, "updated")
         else:
+            _log_item_error(item, imdb_id, "upload failed")
             bump(itype, "errors")
 
     # --- prune DB rows for items no longer in the library ---
@@ -223,6 +273,7 @@ def _acquire_file_lock():
 
 
 def main():
+    _setup_logging()
     print("BetterPosters — Jellyfin poster updater")
     print("=" * 50)
 

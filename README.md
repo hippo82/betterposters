@@ -13,6 +13,10 @@ SQLite database (`betterposters.db`) and only updates:
 3. **items whose poster was changed by Jellyfin itself** (detected via the
    `ImageTags.Primary` hash, which changes whenever the image changes).
 
+Season posters are refreshed with their series poster as well (controlled by
+`UPDATE_SEASONS`, default `true`), because Jellyfin's home screen shows the
+season cover for series (e.g. in the "Recently Added" section).
+
 ## Ready-made image (public)
 
 The Docker image is built automatically by GitHub Actions on every push to
@@ -110,6 +114,10 @@ default `1000`); the `data/` directory must be writable by that uid/gid.
 
 Operational notes:
 
+- **Error logging:** failed items are written to the log with the item type,
+  name, IMDb id and the reason (e.g. `btttr.cc` HTTP 404, Jellyfin upload HTTP
+  status). The console (container) log is always used; set `LOG_FILE` to also
+  append to a file and `LOG_LEVEL` to change verbosity (default `INFO`).
 - **Parallel checks:** btttr.cc ETags are checked with `CHECK_WORKERS` threads
   (default `10`), so a full library check is fast.
 - **Pruning:** DB rows for items that are no longer in the Jellyfin library
